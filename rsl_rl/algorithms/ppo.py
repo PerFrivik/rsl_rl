@@ -70,6 +70,8 @@ class PPO:
         if self.actor_critic.is_recurrent:
             self.transition.hidden_states = self.actor_critic.get_hidden_states()
         # Compute the actions and values
+        print("obs", obs)
+        print("obs shape", obs.shape)
         self.transition.actions = self.actor_critic.act(obs).detach()
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()

@@ -10,7 +10,7 @@ from torch.distributions import Normal
 
 # per frivik
 
-class ActorCritic(nn.Module):
+class ActorCriticConvolution(nn.Module):
     is_recurrent = False
 
     def __init__(
@@ -22,6 +22,7 @@ class ActorCritic(nn.Module):
         critic_hidden_dims=[256, 256, 256],
         activation="elu",
         init_noise_std=1.0,
+        image_input_dims=(1, 336, 188),
         **kwargs,
     ):
         if kwargs:
@@ -32,8 +33,23 @@ class ActorCritic(nn.Module):
         super().__init__()
         activation = get_activation(activation)
 
-        mlp_input_dim_a = num_actor_obs
-        mlp_input_dim_c = num_critic_obs
+        self.image_input_dims = image_input_dims
+
+        # CNN for image observations
+        self.conv_net = nn.Sequential(
+            nn.Conv2d(image_input_dims[0], 32, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.ReLU(),
+            nn.Flatten(),  # Flatten to 1D for concatenation
+        )
+
+        self.cnn_output_size = self._compute_conv_output_size(image_input_dims)
+
+        mlp_input_dim_a = num_actor_obs + self.cnn_output_size
+        mlp_input_dim_c = num_critic_obs + self.cnn_output_size
         # Policy
         actor_layers = []
         actor_layers.append(nn.Linear(mlp_input_dim_a, actor_hidden_dims[0]))
@@ -58,9 +74,11 @@ class ActorCritic(nn.Module):
                 critic_layers.append(activation)
         self.critic = nn.Sequential(*critic_layers)
 
+
         print(f"Actor MLP: {self.actor}")
         print(f"Critic MLP: {self.critic}")
-        print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAActorCritic")
+        print(f"Conv Network: {self.conv_net}")
+
 
         # Action noise
         self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
@@ -99,8 +117,35 @@ class ActorCritic(nn.Module):
         return self.distribution.entropy().sum(dim=-1)
 
     def update_distribution(self, observations):
-        mean = self.actor(observations)
+        # Process image observations with CNN
+        # ogga 
+        # Calculate the total number of image features (flattened)
+        num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
+
+        print("observations shape:", observations.shape)
+
+        # Split the observations tensor
+        other_obs = observations[:, :-num_image_features]  # First part: Non-image features
+        image_obs = observations[:, -num_image_features:]  # Last part: Image features
+
+        image_obs = image_obs.view(-1, *self.image_input_dims)  # Reshape image observations to 4D
+
+        image_features = self.conv_net(image_obs)  # CNN output, flattened to 1D
+        image_features = torch.flatten(image_features, 1)
+
+        # Concatenate image features with other (non-image) observations
+        combined_features = torch.cat((image_features, other_obs), dim=-1)
+
+        print("image_features shape:", image_features.shape)
+        print("other_obs shape:", other_obs.shape)
+        print("combined_features shape:", combined_features.shape)
+
+
+        # Pass the combined features through the actor network
+        mean = self.actor(combined_features)
         self.distribution = Normal(mean, mean * 0.0 + self.std)
+
+        # self. per frivik
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
@@ -113,9 +158,33 @@ class ActorCritic(nn.Module):
         actions_mean = self.actor(observations)
         return actions_mean
 
-    def evaluate(self, critic_observations, **kwargs):
-        value = self.critic(critic_observations)
+    def evaluate(self, observations, **kwargs):
+
+        num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
+
+        # Split the observations tensor
+        other_obs = observations[:, :-num_image_features]  # First part: Non-image features
+        image_obs = observations[:, -num_image_features:]  # Last part: Image features
+
+        image_obs = image_obs.view(-1, *self.image_input_dims)
+
+        # Process image observations with CNN
+        image_features = self.conv_net(image_obs)  # CNN output, flattened to 1D
+        image_features = torch.flatten(image_features, 1)
+
+        # Concatenate image features with other (non-image) observations
+        combined_features = torch.cat((image_features, other_obs), dim=-1)
+
+        # Pass the combined features through the critic network
+        value = self.critic(combined_features)
         return value
+    
+    def _compute_conv_output_size(self, shape):
+        # Compute the CNN output size only once during initialization
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, *shape)  # Batch size of 1, with input shape
+            output = self.conv_net(dummy_input)
+            return int(torch.flatten(output, 1).size(1))
 
 
 def get_activation(act_name):
