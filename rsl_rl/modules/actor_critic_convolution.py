@@ -48,8 +48,10 @@ class ActorCriticConvolution(nn.Module):
 
         self.cnn_output_size = self._compute_conv_output_size(image_input_dims)
 
-        mlp_input_dim_a = num_actor_obs + self.cnn_output_size
-        mlp_input_dim_c = num_critic_obs + self.cnn_output_size
+        num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
+
+        mlp_input_dim_a = (num_actor_obs - num_image_features) + self.cnn_output_size
+        mlp_input_dim_c = (num_critic_obs - num_image_features) + self.cnn_output_size
         # Policy
         actor_layers = []
         actor_layers.append(nn.Linear(mlp_input_dim_a, actor_hidden_dims[0]))
@@ -81,7 +83,8 @@ class ActorCriticConvolution(nn.Module):
 
 
         # Action noise
-        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        # self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        self.log_std = nn.Parameter(torch.log(init_noise_std * torch.ones(num_actions)))
         self.distribution = None
         # disable args validation for speedup
         Normal.set_default_validate_args = False
@@ -122,28 +125,39 @@ class ActorCriticConvolution(nn.Module):
         # Calculate the total number of image features (flattened)
         num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
 
-        print("observations shape:", observations.shape)
+        # print("observations shape:", observations.shape)
 
         # Split the observations tensor
         other_obs = observations[:, :-num_image_features]  # First part: Non-image features
         image_obs = observations[:, -num_image_features:]  # Last part: Image features
+
+        # print("image_obs:", image_obs)
 
         image_obs = image_obs.view(-1, *self.image_input_dims)  # Reshape image observations to 4D
 
         image_features = self.conv_net(image_obs)  # CNN output, flattened to 1D
         image_features = torch.flatten(image_features, 1)
 
+        # print("image_features:", image_features)
+
         # Concatenate image features with other (non-image) observations
         combined_features = torch.cat((image_features, other_obs), dim=-1)
 
-        print("image_features shape:", image_features.shape)
-        print("other_obs shape:", other_obs.shape)
-        print("combined_features shape:", combined_features.shape)
+        # print("image_features shape:", image_features.shape)
+        # print("other_obs shape:", other_obs.shape)
+        # print("combined_features shape:", combined_features.shape)
 
+        # print("Combined features: ", combined_features)
 
         # Pass the combined features through the actor network
         mean = self.actor(combined_features)
-        self.distribution = Normal(mean, mean * 0.0 + self.std)
+        # self.distribution = Normal(mean, mean * 0.0 + self.std)
+        # print("self.log_std.exp() ", self.log_std.exp())
+        self.distribution = Normal(mean, mean * 0.0 + self.log_std.exp())
+        # print("Mean of the distribution: ", self.distribution.mean)
+        # print("Standard deviation of the distribution: ", self.distribution.stddev)
+
+        # print("self.distribution: ", self.distribution)
 
         # self. per frivik
 
