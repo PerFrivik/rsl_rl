@@ -168,9 +168,30 @@ class ActorCriticConvolution(nn.Module):
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
+    # def act_inference(self, observations):
+    #     actions_mean = self.actor(observations)
+    #     return actions_mean
+
     def act_inference(self, observations):
-        actions_mean = self.actor(observations)
+        num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
+
+        # Split the observations into non-image and image features
+        other_obs = observations[:, :-num_image_features]  # First part: Non-image features
+        image_obs = observations[:, -num_image_features:]  # Last part: Image features
+
+        # Reshape and pass the image features through the CNN
+        image_obs = image_obs.view(-1, *self.image_input_dims)
+        image_features = self.conv_net(image_obs)
+        image_features = torch.flatten(image_features, 1)
+
+        # Combine image features with other non-image observations
+        combined_features = torch.cat((image_features, other_obs), dim=-1)
+
+        # Pass the combined features through the actor network
+        actions_mean = self.actor(combined_features)
+
         return actions_mean
+
 
     def evaluate(self, observations, **kwargs):
 
