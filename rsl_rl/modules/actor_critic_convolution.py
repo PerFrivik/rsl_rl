@@ -22,7 +22,8 @@ class ActorCriticConvolution(nn.Module):
         critic_hidden_dims=[256, 256, 256],
         activation="elu",
         init_noise_std=1.0,
-        image_input_dims=(1, 336, 188),
+        image_input_dims=(1, 183, 94),
+        # image_input_dims=(1, 84, 84),
         **kwargs,
     ):
         if kwargs:
@@ -37,13 +38,19 @@ class ActorCriticConvolution(nn.Module):
 
         # CNN for image observations
         self.conv_net = nn.Sequential(
-            nn.Conv2d(image_input_dims[0], 32, kernel_size=8, stride=4),
+            nn.Conv2d(image_input_dims[0], 16, kernel_size=5, stride=2, padding=2),
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Flatten(),  # Flatten to 1D for concatenation
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.AdaptiveMaxPool2d(1),
+            nn.Flatten(start_dim=1),
         )
 
         self.cnn_output_size = self._compute_conv_output_size(image_input_dims)
@@ -136,7 +143,7 @@ class ActorCriticConvolution(nn.Module):
         image_obs = image_obs.view(-1, *self.image_input_dims)  # Reshape image observations to 4D
 
         image_features = self.conv_net(image_obs)  # CNN output, flattened to 1D
-        image_features = torch.flatten(image_features, 1)
+        # image_features = torch.flatten(image_features, 1)
 
         # print("image_features:", image_features)
 
