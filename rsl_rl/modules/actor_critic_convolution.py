@@ -22,7 +22,7 @@ class ActorCriticConvolution(nn.Module):
         critic_hidden_dims=[256, 256, 256],
         activation="elu",
         init_noise_std=1.0,
-        image_input_dims=(1, 183, 94),
+        image_input_dims=(1, 64, 64),
         # image_input_dims=(1, 84, 84),
         **kwargs,
     ):
@@ -46,9 +46,9 @@ class ActorCriticConvolution(nn.Module):
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
+            # nn.MaxPool2d(kernel_size=2, stride=2),
+            # nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            # nn.ReLU(),
             nn.AdaptiveMaxPool2d(1),
             nn.Flatten(start_dim=1),
         )
