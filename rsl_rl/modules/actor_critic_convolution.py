@@ -22,7 +22,7 @@ class ActorCriticConvolution(nn.Module):
         critic_hidden_dims=[256, 256, 256],
         activation="elu",
         init_noise_std=1.0,
-        image_input_dims=(1, 64, 64),
+        image_input_dims=(1, 36, 64),
         # image_input_dims=(1, 84, 84),
         **kwargs,
     ):
