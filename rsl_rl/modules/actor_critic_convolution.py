@@ -57,11 +57,30 @@ class ActorCriticConvolution(nn.Module):
 
         num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
 
-        mlp_input_dim_a = (num_actor_obs - num_image_features) + self.cnn_output_size
-        mlp_input_dim_c = (num_critic_obs - num_image_features) + self.cnn_output_size
+        self.state = None
+        self.num_actor_obs = num_actor_obs
+        self.num_critic_obs = num_critic_obs
+
+        # Here I'm guessing that the image is in both the actor and critic observations
+        if num_actor_obs - num_critic_obs < 0.1:
+            self.mlp_input_dim_a = (num_actor_obs - num_image_features) + self.cnn_output_size
+            self.mlp_input_dim_c = (num_critic_obs - num_image_features) + self.cnn_output_size
+            self.state = 1
+        # Here I'm guessing that the image is only in the actor observations
+        elif num_actor_obs > num_critic_obs:
+            self.mlp_input_dim_a = (num_actor_obs - num_image_features) + self.cnn_output_size
+            self.mlp_input_dim_c = num_critic_obs
+            self.state = 2
+        # Here I'm guessing that the image is only in the critic observations
+        else:
+            self.mlp_input_dim_a = num_actor_obs
+            self.mlp_input_dim_c = (num_critic_obs - num_image_features) + self.cnn_output_size
+            self.state = 3
+
+
         # Policy
         actor_layers = []
-        actor_layers.append(nn.Linear(mlp_input_dim_a, actor_hidden_dims[0]))
+        actor_layers.append(nn.Linear(self.mlp_input_dim_a, actor_hidden_dims[0]))
         actor_layers.append(activation)
         for layer_index in range(len(actor_hidden_dims)):
             if layer_index == len(actor_hidden_dims) - 1:
@@ -73,7 +92,7 @@ class ActorCriticConvolution(nn.Module):
 
         # Value function
         critic_layers = []
-        critic_layers.append(nn.Linear(mlp_input_dim_c, critic_hidden_dims[0]))
+        critic_layers.append(nn.Linear(self.mlp_input_dim_c, critic_hidden_dims[0]))
         critic_layers.append(activation)
         for layer_index in range(len(critic_hidden_dims)):
             if layer_index == len(critic_hidden_dims) - 1:
@@ -125,48 +144,52 @@ class ActorCriticConvolution(nn.Module):
     @property
     def entropy(self):
         return self.distribution.entropy().sum(dim=-1)
-
-    def update_distribution(self, observations):
-        # Process image observations with CNN
-        # ogga 
-        # Calculate the total number of image features (flattened)
+    
+    def update_image_input_dims(self, observations):
         num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
-
-        # print("observations shape:", observations.shape)
 
         # Split the observations tensor
         other_obs = observations[:, :-num_image_features]  # First part: Non-image features
         image_obs = observations[:, -num_image_features:]  # Last part: Image features
 
-        # print("image_obs:", image_obs)
-
         image_obs = image_obs.view(-1, *self.image_input_dims)  # Reshape image observations to 4D
-
         image_features = self.conv_net(image_obs)  # CNN output, flattened to 1D
-        # image_features = torch.flatten(image_features, 1)
-
-        # print("image_features:", image_features)
 
         # Concatenate image features with other (non-image) observations
         combined_features = torch.cat((image_features, other_obs), dim=-1)
+        return combined_features
+    
+    def update_observation_space(self, observations):
 
-        # print("image_features shape:", image_features.shape)
-        # print("other_obs shape:", other_obs.shape)
-        # print("combined_features shape:", combined_features.shape)
+        if self.state == 1:
 
-        # print("Combined features: ", combined_features)
+            return self.update_image_input_dims(observations)
+
+        # state 2 only the actor has the image input 
+        elif self.state == 2 and observations.size()[1] == self.num_actor_obs:
+                
+            return self.update_image_input_dims(observations)
+
+        # state 3 only the critic has the image input
+        elif self.state == 3 and observations.size()[1] == self.num_critic_obs:
+
+            return self.update_image_input_dims(observations)
+
+        else:
+            return observations
+
+
+    def update_distribution(self, observations):
+        # Process image observations with CNN
+        # ogga 
+        # Calculate the total number of image features (flattened)
+
+        combined_features = self.update_observation_space(observations)
 
         # Pass the combined features through the actor network
         mean = self.actor(combined_features)
-        # self.distribution = Normal(mean, mean * 0.0 + self.std)
-        # print("self.log_std.exp() ", self.log_std.exp())
         self.distribution = Normal(mean, mean * 0.0 + self.log_std.exp())
-        # print("Mean of the distribution: ", self.distribution.mean)
-        # print("Standard deviation of the distribution: ", self.distribution.stddev)
 
-        # print("self.distribution: ", self.distribution)
-
-        # self. per frivik
 
     def act(self, observations, **kwargs):
         self.update_distribution(observations)
@@ -180,19 +203,8 @@ class ActorCriticConvolution(nn.Module):
     #     return actions_mean
 
     def act_inference(self, observations):
-        num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
 
-        # Split the observations into non-image and image features
-        other_obs = observations[:, :-num_image_features]  # First part: Non-image features
-        image_obs = observations[:, -num_image_features:]  # Last part: Image features
-
-        # Reshape and pass the image features through the CNN
-        image_obs = image_obs.view(-1, *self.image_input_dims)
-        image_features = self.conv_net(image_obs)
-        image_features = torch.flatten(image_features, 1)
-
-        # Combine image features with other non-image observations
-        combined_features = torch.cat((image_features, other_obs), dim=-1)
+        combined_features = self.update_observation_space(observations)
 
         # Pass the combined features through the actor network
         actions_mean = self.actor(combined_features)
@@ -202,20 +214,21 @@ class ActorCriticConvolution(nn.Module):
 
     def evaluate(self, observations, **kwargs):
 
-        num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
+        # num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
 
-        # Split the observations tensor
-        other_obs = observations[:, :-num_image_features]  # First part: Non-image features
-        image_obs = observations[:, -num_image_features:]  # Last part: Image features
+        # # Split the observations tensor
+        # other_obs = observations[:, :-num_image_features]  # First part: Non-image features
+        # image_obs = observations[:, -num_image_features:]  # Last part: Image features
 
-        image_obs = image_obs.view(-1, *self.image_input_dims)
+        # image_obs = image_obs.view(-1, *self.image_input_dims)
 
-        # Process image observations with CNN
-        image_features = self.conv_net(image_obs)  # CNN output, flattened to 1D
-        image_features = torch.flatten(image_features, 1)
+        # # Process image observations with CNN
+        # image_features = self.conv_net(image_obs)  # CNN output, flattened to 1D
+        # image_features = torch.flatten(image_features, 1)
 
-        # Concatenate image features with other (non-image) observations
-        combined_features = torch.cat((image_features, other_obs), dim=-1)
+        # # Concatenate image features with other (non-image) observations
+        # combined_features = torch.cat((image_features, other_obs), dim=-1)
+        combined_features = self.update_observation_space(observations)
 
         # Pass the combined features through the critic network
         value = self.critic(combined_features)
