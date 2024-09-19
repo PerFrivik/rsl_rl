@@ -22,7 +22,7 @@ class ActorCriticDoubleConvolution(nn.Module):
         critic_hidden_dims=[256, 256, 256],
         activation="elu",
         init_noise_std=1.0,
-        image_input_dims=(1, 36, 64),
+        image_input_dims=(1, 40, 64),
         depth_input_dims=(1, 21, 21),
         **kwargs,
     ):
@@ -50,25 +50,25 @@ class ActorCriticDoubleConvolution(nn.Module):
             # nn.MaxPool2d(kernel_size=2, stride=2),
             # nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
             # nn.ReLU(),
-            nn.AdaptiveMaxPool2d(1),
+            nn.AdaptiveMaxPool2d((2, 1)),
             nn.Flatten(start_dim=1),
+            # output size is 128
         )
 
         # TODO: Change the sizes here 
         self.conv_depth_net = nn.Sequential(
             nn.Conv2d(depth_input_dims[0], 16, kernel_size=5, stride=2, padding=2),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             # nn.MaxPool2d(kernel_size=2, stride=2),
             # nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
             # nn.ReLU(),
-            nn.AdaptiveMaxPool2d(1),
+            nn.AdaptiveMaxPool2d((2, 2)),
             nn.Flatten(start_dim=1),
+            # output size is 256
         )
 
         self.cnn_image_output_size = self._compute_conv_image_output_size(image_input_dims)
@@ -211,20 +211,15 @@ class ActorCriticDoubleConvolution(nn.Module):
             return self.update_depth_input_dims(observations)
 
 
-    def update_distribution(self, observations):
-        # Process image observations with CNN
-        # ogga 
-        # Calculate the total number of image features (flattened)
-
-        combined_features = self.update_observation_space(observations)
-
+    def update_distribution(self, combined_features):
         # Pass the combined features through the actor network
         mean = self.actor(combined_features)
-        self.distribution = Normal(mean, mean * 0.0 + self.log_std.exp())
+        self.distribution = Normal(mean, self.log_std.exp().expand_as(mean))
 
 
     def act(self, observations, **kwargs):
-        self.update_distribution(observations)
+        combined_features = self.update_observation_space(observations)
+        self.update_distribution(combined_features)
         return self.distribution.sample()
 
     def get_actions_log_prob(self, actions):

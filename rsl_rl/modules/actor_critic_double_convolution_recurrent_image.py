@@ -13,8 +13,8 @@ from rsl_rl.utils import unpad_trajectories
 
 # per frivik
 
-class ActorCriticDoubleConvolution(nn.Module):
-    is_recurrent = False
+class ActorCriticDoubleConvolutionRNNImage(nn.Module):
+    is_recurrent = True
 
     def __init__(
         self,
@@ -27,6 +27,9 @@ class ActorCriticDoubleConvolution(nn.Module):
         init_noise_std=1.0,
         image_input_dims=(1, 40, 64),
         depth_input_dims=(1, 21, 21),
+        rnn_type="lstm",
+        rnn_hidden_size=256,
+        rnn_num_layers=1,
         **kwargs,
     ):
         if kwargs:
@@ -40,6 +43,7 @@ class ActorCriticDoubleConvolution(nn.Module):
         self.image_input_dims = image_input_dims
         self.depth_input_dims = depth_input_dims
 
+
         # CNN for image observations
         self.conv_image_net = nn.Sequential(
             nn.Conv2d(image_input_dims[0], 16, kernel_size=5, stride=2, padding=2),
@@ -50,9 +54,6 @@ class ActorCriticDoubleConvolution(nn.Module):
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            # nn.MaxPool2d(kernel_size=2, stride=2),
-            # nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            # nn.ReLU(),
             nn.AdaptiveMaxPool2d((2, 1)),
             nn.Flatten(start_dim=1),
             # output size is 128
@@ -66,9 +67,6 @@ class ActorCriticDoubleConvolution(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            # nn.MaxPool2d(kernel_size=2, stride=2),
-            # nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            # nn.ReLU(),
             nn.AdaptiveMaxPool2d((2, 2)),
             nn.Flatten(start_dim=1),
             # output size is 256
@@ -84,25 +82,10 @@ class ActorCriticDoubleConvolution(nn.Module):
         self.num_critic_obs = num_critic_obs
 
         # actor gets the image input 
-        self.mlp_input_dim_actor_image = (num_actor_obs - self.num_image_features) + self.cnn_image_output_size
+        self.mlp_input_dim_actor_image = (num_actor_obs - self.num_image_features) + self.cnn_image_output_size * (rnn_num_layers + 1)
         self.mlp_input_dim_critic_depth = (num_critic_obs - self.num_depth_features) + self.cnn_depth_output_size
 
-        # # Here I'm guessing that the image is in both the actor and critic observations
-        # if num_actor_obs - num_critic_obs < 0.1:
-        #     self.mlp_input_dim_actor_image = (num_actor_obs - num_image_features) + self.cnn_depth_output_size
-        #     self.mlp_input_dim_critic_depth = (num_critic_obs - num_image_features) + self.cnn_depth_output_size
-        #     self.state = 1
-        # # Here I'm guessing that the image is only in the actor observations
-        # elif num_actor_obs > num_critic_obs:
-        #     self.mlp_input_dim_actor_image = (num_actor_obs - num_image_features) + self.cnn_depth_output_size
-        #     self.mlp_input_dim_critic_depth = num_critic_obs
-        #     self.state = 2
-        # # Here I'm guessing that the image is only in the critic observations
-        # else:
-        #     self.mlp_input_dim_actor_image = num_actor_obs
-        #     self.mlp_input_dim_critic_depth = (num_critic_obs - num_image_features) + self.cnn_depth_output_size
-        #     self.state = 3
-
+        self.memory_image = Memory(self.cnn_image_output_size, type=rnn_type, num_layers=rnn_num_layers, hidden_size=rnn_hidden_size)
 
         # Policy
         actor_layers = []
@@ -133,6 +116,7 @@ class ActorCriticDoubleConvolution(nn.Module):
         print(f"Critic MLP: {self.critic}")
         print(f"Conv Image Network: {self.conv_image_net}")
         print(f"Conv Depth Network: {self.conv_depth_net}")
+        print(f"Actor RNN: {self.memory_image}")
 
 
         # Action noise
@@ -155,7 +139,7 @@ class ActorCriticDoubleConvolution(nn.Module):
         ]
 
     def reset(self, dones=None):
-        pass
+        self.memory_image.reset(dones)  # reset hidden states of the RNN
 
     def forward(self):
         raise NotImplementedError
@@ -182,8 +166,17 @@ class ActorCriticDoubleConvolution(nn.Module):
         image_obs = image_obs.view(-1, *self.image_input_dims)  # Reshape image observations to 4D
         image_features = self.conv_image_net(image_obs)  # CNN output, flattened to 1D
 
+        image_features = self.memory_image(image_features)
+
+        image_features = image_features.squeeze(0)
+
         # Concatenate image features with other (non-image) observations
+
+        print("image_features", image_features.size())
+        print("other_obs", other_obs.size())
+        print("--------------------")
         combined_features = torch.cat((image_features, other_obs), dim=-1)
+
         return combined_features
     
     def update_depth_input_dims(self, observations):
@@ -196,13 +189,18 @@ class ActorCriticDoubleConvolution(nn.Module):
         depth_obs = depth_obs.view(-1, *self.depth_input_dims)  # Reshape depth observations to 4D
         depth_features = self.conv_depth_net(depth_obs)  # CNN output, flattened to 1D
 
+        # depth_features = depth_features.squeeze(0)
+
         # Concatenate depth features with other (non-depth) observations
+        print("depth_features", depth_features.size())
+        print("other_obs", other_obs.size())
         combined_features = torch.cat((depth_features, other_obs), dim=-1)
         return combined_features
     
     def update_observation_space(self, observations):
 
         # state 2 only the actor has the image input 
+        print("observations.size()[1]", observations.size()[1])
         if observations.size()[1] == self.num_actor_obs:
                 
             return self.update_image_input_dims(observations)
@@ -244,25 +242,16 @@ class ActorCriticDoubleConvolution(nn.Module):
 
     def evaluate(self, observations, **kwargs):
 
-        # num_image_features = self.image_input_dims[0] * self.image_input_dims[1] * self.image_input_dims[2]
 
-        # # Split the observations tensor
-        # other_obs = observations[:, :-num_image_features]  # First part: Non-image features
-        # image_obs = observations[:, -num_image_features:]  # Last part: Image features
-
-        # image_obs = image_obs.view(-1, *self.image_input_dims)
-
-        # # Process image observations with CNN
-        # image_features = self.conv_image_net(image_obs)  # CNN output, flattened to 1D
-        # image_features = torch.flatten(image_features, 1)
-
-        # # Concatenate image features with other (non-image) observations
-        # combined_features = torch.cat((image_features, other_obs), dim=-1)
         combined_features = self.update_observation_space(observations)
 
         # Pass the combined features through the critic network
         value = self.critic(combined_features)
         return value
+    
+    def get_hidden_states(self):
+        print("hidden_states")
+        return self.memory_image.hidden_states
     
     def _compute_conv_image_output_size(self, shape):
         # Compute the CNN output size only once during initialization
