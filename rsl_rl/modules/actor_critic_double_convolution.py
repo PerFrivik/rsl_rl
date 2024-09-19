@@ -197,19 +197,18 @@ class ActorCriticDoubleConvolution(nn.Module):
         combined_features = torch.cat((depth_features, other_obs), dim=-1)
         return combined_features
     
-    def update_observation_space(self, observations):
+    # def update_observation_space(self, observations):
 
-        # state 2 only the actor has the image input 
-        if observations.size()[1] == self.num_actor_obs:
+    #     # state 2 only the actor has the image input 
+    #     if observations.size()[1] == self.num_actor_obs:
                 
-            return self.update_image_input_dims(observations)
+            
 
-        # state 3 only the critic has the image input
-        # if observations.size()[1] == self.num_critic_obs:
-        else:
+    #     # state 3 only the critic has the image input
+    #     # if observations.size()[1] == self.num_critic_obs:
+    #     else:
 
-            return self.update_depth_input_dims(observations)
-
+    #         return 
 
     def update_distribution(self, combined_features):
         # Pass the combined features through the actor network
@@ -218,7 +217,7 @@ class ActorCriticDoubleConvolution(nn.Module):
 
 
     def act(self, observations, **kwargs):
-        combined_features = self.update_observation_space(observations)
+        combined_features = self.update_image_input_dims(observations)
         self.update_distribution(combined_features)
         return self.distribution.sample()
 
@@ -230,12 +229,9 @@ class ActorCriticDoubleConvolution(nn.Module):
     #     return actions_mean
 
     def act_inference(self, observations):
-
-        combined_features = self.update_observation_space(observations)
-
+        combined_features = self.update_image_input_dims(observations)
         # Pass the combined features through the actor network
         actions_mean = self.actor(combined_features)
-
         return actions_mean
 
 
@@ -255,7 +251,7 @@ class ActorCriticDoubleConvolution(nn.Module):
 
         # # Concatenate image features with other (non-image) observations
         # combined_features = torch.cat((image_features, other_obs), dim=-1)
-        combined_features = self.update_observation_space(observations)
+        combined_features = self.update_depth_input_dims(observations)
 
         # Pass the combined features through the critic network
         value = self.critic(combined_features)
